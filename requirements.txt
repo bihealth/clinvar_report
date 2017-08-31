@@ -1,0 +1,2 @@
+vcfpy >=0.10
+jinja2
