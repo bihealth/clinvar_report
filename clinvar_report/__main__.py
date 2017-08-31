@@ -34,6 +34,53 @@ SIG_LEVELS = {
     'other': 255,
 }
 
+Individual = collections.namedtuple(
+    'Individual',
+    ['family', 'name', 'father', 'mother', 'gender', 'affected'])
+
+
+class Pedigree:
+    """Represents a pedigree"""
+
+    @classmethod
+    def load(klass, file):
+        entries = []
+        for line in file:
+            entries.append(Individual(*line.strip().split('\t')[:6]))
+        return Pedigree(entries)
+
+    def __init__(self, entries):
+        self.entries = entries
+        self._father_of = {e.name: e.father for e in self.entries}
+        self._mother_of = {e.name: e.mother for e in self.entries}
+        self._by_name = {e.name: e for e in self.entries}
+        self.by_family = {}
+        for entry in self.entries:
+            self.by_family.setdefault(entry.family, []).append(entry)
+
+    def get_individual(self, name):
+        return self._by_name.get(name)
+
+    def get_father(self, name):
+        """Return id of father, if any, otherwise None"""
+        result = self._father_of.get(name)
+        if result == '0':
+            return None
+        return result
+
+    def get_mother(self, name):
+        """Return id of mother, if any, otherwise None"""
+        result = self._mother_of.get(name)
+        if result == '0':
+            return None
+        return result
+
+    def print_ped(self, file):
+        for e in self.entries:
+            print('\t'.join(map(str,
+                                [e.family, e.name, e.father, e.mother,
+                                 e.gender, e.affected])), file=file)
+
 def shorten_aa(x):
     d = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': 'K',
          'ILE': 'I', 'PRO': 'P', 'THR': 'T', 'PHE': 'F', 'ASN': 'N',
@@ -154,7 +201,8 @@ class Variant:
 
     def __init__(
             self, chrom, pos, ref, alt, annotations, basic_infos,
-            disease_infos, variant_infos, gt_infos):
+            disease_infos, variant_infos, gt_infos, inheritance_modes,
+            common, candidate):
         #: Chromosome with variant
         self.chrom = chrom
         #: Chromosomal variant position
@@ -215,6 +263,12 @@ class Variant:
                 if db_info['name'] not in ('not specified', 'not provided'):
                     self.diseases[db_info['id']] = db_info['name']
         self.diseases = list(sorted(set(self.diseases.values())))
+        #: Compatible modes of inheritance
+        self.inheritance_modes = inheritance_modes
+        #: Whether or not flagged as common
+        self.common = bool(common)
+        #: Candidate because affected shows non-ref/no-call variant.
+        self.candidate = candidate
 
     def __repr__(self):
         return 'VarInfo({})'.format(', '.join(map(
@@ -223,7 +277,7 @@ class Variant:
                   self.gt_infos))))
 
 
-def parse_record(var, args):
+def parse_record(var, ped, args):
     # Parse ANN
     annotations = collections.OrderedDict()
     if 'ANN' in var.INFO:
@@ -278,12 +332,23 @@ def parse_record(var, args):
         gt_infos[call.sample] = GenotypeInfo(
             call.sample, call.data['GT'], call.data['AD'])
 
+    # Get compatible modes of inheritance
+    inheritance_modes = var.INFO.get('INHERITANCE', [])
+
+    # Any affected individual has a het. or hom. alt. call
+    affecteds = [i.name for i in ped.entries if i.affected == '2']
+    candidate = False
+    for call in var.calls:
+        if call.sample in affecteds and call.called and call.gt_type != vcfpy.HOM_REF:
+            candidate = True
+
     alts = [a.serialize() for a in var.ALT]
     alts = [a for a in alts
             if a in basic_infos or a in disease_infos or a in var_infos]
     return Variant(
         var.CHROM, var.POS, var.REF, alts, annotations, basic_infos,
-        disease_infos, var_infos, gt_infos)
+        disease_infos, var_infos, gt_infos, inheritance_modes,
+        var.INFO.get('DBSNP_COMMON', False), candidate)
 
 
 def setup_logging(args):
@@ -298,9 +363,25 @@ def setup_logging(args):
         logger.setLevel(logging.INFO)
 
 
+def var_group(variant):
+    """Returns group for the variant"""
+    if variant.common:
+        return 'bad_common'
+    elif not variant.candidate:
+        return 'bad_affecteds'
+    elif not variant.inheritance_modes:
+        return 'bad_inheritance'
+    else:
+        return 'good'
+
+
 def run(args):
     """Main program entry point after parsing command line arguments."""
     setup_logging(args)
+
+    with open(args.input_ped, 'rt') as f:
+        ped = Pedigree.load(f)
+
     logging.info('Reading input VCF file %s', args.input_vcf)
     with vcfpy.Reader.from_path(args.input_vcf) as reader:
         samples = reader.header.samples.names
@@ -309,12 +390,22 @@ def run(args):
     logging.info(' => done reading %d records', len(records))
 
     logging.info('Parsing ClinVar VCF')
+    variants = [parse_record(r, ped, args) for r in records]
+    logging.info(' => done parsing ClinVar VCF')
+
+    grouped_vars = {}
+    for var in variants:
+        grouped_vars.setdefault(var_group(var), []).append(var)
+
+    logging.info('Grouped variants')
+    for key, lst in sorted(grouped_vars.items()):
+        logging.info("%s: %d", key, len(lst))
+
     values = {
-        'variants': [parse_record(r, args) for r in records],
+        'variants': grouped_vars,
         'samples': samples,
         'short_samples': short_samples,
     }
-    logging.info(' => done parsing ClinVar VCF')
 
     logging.info('Writing report file %s', args.output_html)
     from jinja2 import Environment, PackageLoader, select_autoescape
@@ -333,6 +424,9 @@ def main(argv=None):
     parser.add_argument(
         '--verbose', action='store_true', default=False,
         help='Enable verbose mode')
+    parser.add_argument(
+        '--input-ped', required=True,
+        help='Path to pedigree to use for affected filtering')
     parser.add_argument(
         '--input-vcf', type=str, required=True,
         help='Path to input VCF file')
