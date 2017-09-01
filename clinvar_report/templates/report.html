@@ -31,6 +31,30 @@
             <dt class="col-sm-1">Samples:</dt>
             <dd class="col-sm-11">{{ short_samples|join(", ") }}</dd>
           </dl>
+
+          <div class="alert alert-info" role="alert">
+            <p>
+              <strong>Notes</strong>
+            </p>
+            <ul>
+              <li>Click the &#x229e; icon on the left to view the full variant information.</li>
+              <li>
+                Note that the level information at the highest revision quality is shown in the table.
+                More information is available in the variant details.
+              </li>
+              <li>
+                Variants are first sorted by revision status, then by significance.
+                Note that in most cases, a high revision status implies high significance as well.
+              </li>
+              <li>
+                The variants were filtered in the following order:
+                (a) remove variants where no affected shows a non-reference or no-call genotype,
+                (b) remove variants that are flagged as common,
+                (c) remove variants that have no compatible mode of inheritance with the given pedigree.
+                Nevertheless, you can still view the variants removed in each step.
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -38,7 +62,7 @@
         <div class="col-12">
 
           <!-- Tabs -->
-          <ul class="nav nav-tabs" role="tablist">
+          <ul class="nav nav-tabs" role="tablist" style="margin-left: 1em; margin-right: 1em; border-bottom: none;">
             <li class="nav-item">
               <a class="nav-link active" data-toggle="tab" href="#good" role="tab">
                 Good Variants
@@ -52,15 +76,15 @@
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" data-toggle="tab" href="#affected" role="tab">
-                Removed: Affected
-                <span class="badge badge-pill badge-warning">{{ variants['bad_affecteds']|length }}</span>
+              <a class="nav-link" data-toggle="tab" href="#common" role="tab">
+                Removed: Common
+                <span class="badge badge-pill badge-warning">{{ variants['bad_common']|length }}</span>
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" data-toggle="tab" href="#common" role="tab">
-                Common
-                <span class="badge badge-pill badge-warning">{{ variants['bad_common']|length }}</span>
+              <a class="nav-link" data-toggle="tab" href="#affected" role="tab">
+                Removed: Affected
+                <span class="badge badge-pill badge-warning">{{ variants['bad_affecteds']|length }}</span>
               </a>
             </li>
           </ul>
@@ -70,12 +94,11 @@
               <div class="card">
                 <div class="card-block">
                   <p class="card-text" style="padding: 1em;">
-                    These variants are (a) not common, (b) at least one affected has a non-reference
-                    variant, (c) there is a compatible Mendelian mode of inheritance.
+                    For these variants, (a) at least one affected has a non-reference variant, (b) they are not common, (c) there is a compatible Mendelian mode of inheritance.
                   </p>
                 </div>
                 <div class="card-block">
-                  {% with variants = variants['good'] %}
+                  {% with variants = variants['good'], set_name = 'good' %}
                     {% include "_result_table.html" %}
                   {% endwith %}
                 </div>
@@ -85,27 +108,11 @@
               <div class="card">
                 <div class="card-block">
                   <p class="card-text" style="padding: 1em;">
-                    These variants are (a) not common, (b) at least one affected has a non-reference
-                    variant, (c) there is no compatible Mendelian mode of inheritance.
+                      For these variants, (a) at least one affected has a non-reference variant, (b) they are not common.
                   </p>
                 </div>
                 <div class="card-block">
-                  {% with variants = variants['bad_inheritance'] %}
-                    {% include "_result_table.html" %}
-                  {% endwith %}
-                </div>
-              </div>
-            </div>
-            <div class="tab-pane" id="affected" role="tabpanel">
-              <div class="card">
-                <div class="card-block">
-                  <p class="card-text" style="padding: 1em;">
-                    These variants are (a) not common, (b) all affected individuals are wild-type
-                    or no-call.
-                  </p>
-                </div>
-                <div class="card-block">
-                  {% with variants = variants['bad_affecteds'] %}
+                  {% with variants = variants['bad_inheritance'], set_name = 'bad_inheritance' %}
                     {% include "_result_table.html" %}
                   {% endwith %}
                 </div>
@@ -115,11 +122,25 @@
               <div class="card">
                 <div class="card-block">
                   <p class="card-text" style="padding: 1em;">
-                    These variants are (a) common.
+                      For these variants, (a) at least one affected has a non-reference variant.
                   </p>
                 </div>
                 <div class="card-block">
-                  {% with variants = variants['bad_common'] %}
+                  {% with variants = variants['bad_common'], set_name = 'bad_common' %}
+                    {% include "_result_table.html" %}
+                  {% endwith %}
+                </div>
+              </div>
+            </div>
+            <div class="tab-pane" id="affected" role="tabpanel">
+              <div class="card">
+                <div class="card-block">
+                  <p class="card-text" style="padding: 1em;">
+                    For these variants, no affected has a non-reference variant.
+                  </p>
+                </div>
+                <div class="card-block">
+                  {% with variants = variants['bad_affecteds'], set_name = 'bad_affecteds' %}
                     {% include "_result_table.html" %}
                   {% endwith %}
                 </div>

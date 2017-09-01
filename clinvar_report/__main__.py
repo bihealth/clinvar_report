@@ -33,6 +33,16 @@ SIG_LEVELS = {
     'not_provided': 0,
     'other': 255,
 }
+REVISION_STARS = {
+    "conflicting_interpretation": 1,
+    "expert_panel_reviewed": 3,
+    "pratice_guideline": 4,
+    "multiple_submitters_no_conflict": 2,
+    "no_assertion": 0,
+    "no_assertion_criteria": 0,
+    "single_submitter": 1,
+    "other": 0,
+}
 
 Individual = collections.namedtuple(
     'Individual',
@@ -82,12 +92,12 @@ class Pedigree:
                                  e.gender, e.affected])), file=file)
 
 def shorten_aa(x):
-    d = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': 'K',
-         'ILE': 'I', 'PRO': 'P', 'THR': 'T', 'PHE': 'F', 'ASN': 'N',
-         'GLY': 'G', 'HIS': 'H', 'LEU': 'L', 'ARG': 'R', 'TRP': 'W',
-         'ALA': 'A', 'VAL':'V', 'GLU': 'E', 'TYR': 'Y', 'MET': 'M'}
+    d = {'Cys': 'C', 'Asp': 'D', 'Ser': 'S', 'Gln': 'Q', 'Lys': 'K',
+         'Ile': 'I', 'Pro': 'P', 'Thr': 'T', 'Phe': 'F', 'Asn': 'N',
+         'Gly': 'G', 'His': 'H', 'Leu': 'L', 'Arg': 'R', 'Trp': 'W',
+         'Ala': 'A', 'Val':'V', 'Glu': 'E', 'Tyr': 'Y', 'Met': 'M'}
     prefix = x.startswith('p.')
-    x = x.replace('p.(', '').replace(')', '').upper()
+    x = x.replace('p.(', '').replace(')', '')
     for k, v in d.items():
         x = x.replace(k, v)
     if prefix:
@@ -155,6 +165,7 @@ class DiseaseInfo:
             })
         self.name_in_db = name_in_db
         self.revision_status = revision_status
+        self.stars = REVISION_STARS[revision_status]
         self.clinical_accession = clinical_accession
 
     def __repr__(self):
@@ -269,6 +280,26 @@ class Variant:
         self.common = bool(common)
         #: Candidate because affected shows non-ref/no-call variant.
         self.candidate = candidate
+        #: Pick significance and stars to display.
+        self.significance, self.stars, self.config = self._pick_display_significance(allele)
+
+    def _pick_display_significance(self, allele):
+        sigs_at_stars = {}
+        for info in self.disease_infos[allele]:
+            stars = REVISION_STARS[info.revision_status]
+            level = SIG_LEVELS[info.significance]
+            if level >= 255:
+                continue
+            sigs_at_stars.setdefault(stars, {}).setdefault(level, 0)
+            sigs_at_stars[stars][level] += 1
+        stars = max(sigs_at_stars.keys())
+        sigs = set(sigs_at_stars[stars])
+        if (sigs & {2, 3}) and (sigs & {4, 5, 6, 7}):
+            conflict = True
+        else:
+            conflict = True
+        sig = {'level': max(sigs), 'count': self.significances[max(sigs)]}
+        return sig, stars, conflict
 
     def __repr__(self):
         return 'VarInfo({})'.format(', '.join(map(
@@ -365,10 +396,10 @@ def setup_logging(args):
 
 def var_group(variant):
     """Returns group for the variant"""
-    if variant.common:
-        return 'bad_common'
-    elif not variant.candidate:
+    if not variant.candidate:
         return 'bad_affecteds'
+    elif variant.common:
+        return 'bad_common'
     elif not variant.inheritance_modes:
         return 'bad_inheritance'
     else:
@@ -396,6 +427,8 @@ def run(args):
     grouped_vars = {}
     for var in variants:
         grouped_vars.setdefault(var_group(var), []).append(var)
+    for key in grouped_vars:
+        grouped_vars[key].sort(key=lambda v: (v.stars, v.significance['level']), reverse=True)
 
     logging.info('Grouped variants')
     for key, lst in sorted(grouped_vars.items()):

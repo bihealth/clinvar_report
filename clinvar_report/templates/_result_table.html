@@ -11,6 +11,7 @@
       <th>effect</th>
       <th>disease</th>
       <th>significance</th>
+      <th>revision</th>
       {% for sample in short_samples %}
       <th>{{ sample }}</th>
       {% endfor %}
@@ -33,7 +34,7 @@
     {% for var in variants %}
     <tr>
       <td class="nowrap">
-        <a href="#details-{{ loop.index }}" data-toggle="collapse">
+        <a href="#details-{{ loop.index }}-{{ set_name }}" data-toggle="collapse">
           &#x229e;
         </a>&nbsp;{{ loop.index }}
       </td>
@@ -70,7 +71,7 @@
         {% endif %}
       </td>
       <td>
-        <ul style="margin: 0;">
+        <ul style="margin: 0; padding: 0;">
           {% for disease in var.diseases %}
             <li>{{ disease }}</li>
           {% endfor %}
@@ -87,7 +88,7 @@
                   {% if loop.index > 1 %};<br />{% endif %}{{ disease }}
                 {%- endfor -%}">
                 {{ disease }}
-                <a href="#details-{{ outer_loop.index }}" data-toggle="collapse" title="variant details has {{ var.clinical_accessions|length - 1}} more ClinVar entries">
+                <a href="#details-{{ outer_loop.index }}-{{ set_name }}" data-toggle="collapse" title="variant details has {{ var.clinical_accessions|length - 1}} more ClinVar entries">
                   <span class="badge badge-pill badge-info">
                     +{{ var.diseases|length - 1}}
                   </span>
@@ -99,23 +100,25 @@
         #}
       </td>
       <td>
-        {% if var.significances|length == 1 %}
-          {% for lvl, count in var.significances|dictsort|reverse %}
-            {{ count }}&#10005;{{ lvl }}
-          {% endfor %}
+        {% if var.conflict %}
+          !!conflict, see details for more info!!
         {% else %}
-          {% for lvl, count in var.significances|dictsort|reverse %}
-            {% if loop.index < 2 %}
-              <a href="#" data-toggle="tooltip" data-original-title="
-                {%- for lvl, count in var.significances|dictsort|reverse -%}
-                  {% if loop.index > 1 %}, {% endif %}
-                  {{ count }}&#10005;{{ lvl}}
-                {%- endfor -%}">
+          {% if var.significances|length == 1 %}
+            {{ var.significance['count'] }}&#10005;{{ var.significance['level'] }}
+          {% else %}
+            <a href="#" data-toggle="tooltip" data-original-title="
+              {%- for lvl, count in var.significances|dictsort|reverse -%}
+                {% if loop.index > 1 %}, {% endif %}
                 {{ count }}&#10005;{{ lvl }}
-              </a>
-            {% endif %}
-          {% endfor %}
+              {%- endfor -%}">
+              {{ var.significance['count'] }}&#10005;{{ var.significance['level'] }}
+            </a>
+          {% endif %}
         {% endif %}
+      </td>
+      <td class="nowrap">
+        {% for i in range(var.stars) %}&#9733;{% endfor -%}
+        {%- for i in range(4 - var.stars) %}&#9734;{% endfor %}
       </td>
       {% for gt_info in var.gt_infos.values() %}
         <td>
@@ -129,7 +132,11 @@
         </td>
       {% endfor %}
       <td>
-        {{ var.inheritance_modes|join(', ') }}
+        {% if not var.inheritance_modes %}
+          -
+        {% else %}
+          {{ var.inheritance_modes|join(', ') }}
+        {% endif %}
       </td>
       <td>
         {{ 'common' if var.common else '-' }}
@@ -139,7 +146,7 @@
           ClinVar
         </a>
         {% if var.clinical_accessions|length > 1 %}
-          &nbsp; <a href="#details-{{ loop.index }}" data-toggle="collapse" title="variant details has {{ var.clinical_accessions|length - 1}} more ClinVar entries">
+          &nbsp; <a href="#details-{{ loop.index }}-{{ set_name }}" data-toggle="collapse" title="variant details has {{ var.clinical_accessions|length - 1}} more ClinVar entries">
             <span class="badge badge-pill badge-info">
               +{{ var.clinical_accessions|length - 1}}
             </span>
@@ -147,7 +154,7 @@
         {% endif %}
       </td>
     </tr>
-    <tr id="details-{{ loop.index }}" class="collapse">
+    <tr id="details-{{ loop.index }}-{{ set_name }}" class="collapse">
       <td colspan="{{ 4 + (var.gt_infos|length) * 2 }}">
         <div class="card">
           <!--
