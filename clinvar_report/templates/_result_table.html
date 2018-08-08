@@ -114,7 +114,7 @@
       {% for gt_info in var.gt_infos.values() %}
         <td>
           {% if gt_info.ad %}
-            <a href="#details-{{ loop.index }}-{{ gt_info.sample }}"  data-toggle="tooltip" data-html="true" data-original-title="allele depths (ref, alt1, [alt2, ...]): {{ gt_info.ad|join(', ') }}<br />alt allele fractions: {{ (100 * gt_info.ad[1] // (gt_info.ad[0] + gt_info.ad[1])) }}%">
+            <a href="#details-{{ loop.index }}-{{ gt_info.sample }}"  data-toggle="tooltip" data-html="true" data-original-title="allele depths (ref, alt1, [alt2, ...]): {{ gt_info.ad|join(', ') }}<br />alt allele fractions: {{ gt_info.aaf }}%">
               {{ gt_info.gt }}
             </a>
           {% else %}

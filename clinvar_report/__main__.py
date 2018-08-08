@@ -119,8 +119,14 @@ class GenotypeInfo(typing.NamedTuple):
 
     sample: str
     gt: str
-    ad: int
+    ad: typing.List[int]
 
+    @property
+    def aaf(self):
+        if sum(self.ad) == 0:
+            return 0.0
+        else:
+            return 100 * self.ad[1] // sum(self.ad)
 
 @attr.s
 class Variant:
