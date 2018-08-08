@@ -54,8 +54,8 @@
               <li>
                 The variants were filtered in the following order:
                 (a) remove variants where no affected shows a non-reference or no-call genotype,
-                (b) remove variants that are flagged as common,
-                (c) remove variants flagged as benign,
+                (b) remove variants that have an ExAC frequency above {{ exac_freq_common }},
+                (c) remove variants flagged as one of {{ benign_tokens|join(', ') }}
                 (d) remove variants with uncertain significance, conflicting interpretation or non-provided significance,
                 Nevertheless, you can still view the variants removed in each step.
               </li>
@@ -130,7 +130,7 @@
               <div class="card">
                 <div class="card-block">
                   <p class="card-text" style="padding: 1em;">
-                    These variants pass (a) but are (b) flagged as COMMON in dbSNP or COSMIC.
+                    These variants pass (a) but are (b) have an ExAC frequency above {{ exac_freq_common }}
                   </p>
                 </div>
                 <div class="card-block">

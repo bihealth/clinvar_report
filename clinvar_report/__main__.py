@@ -24,6 +24,8 @@ SEX = {"0": "unknown", "1": "male", "2": "female"}
 
 AFFECTED = {"0": "unknown", "1": "unaffected", "2": "affected"}
 
+BENIGN_TOKENS = ('benign', 'drug response', 'protective', 'association', 'risk factor', 'other')
+
 
 class Pedigree:
     """Represents a pedigree"""
@@ -181,9 +183,7 @@ class Variant:
     @property
     def benign(self):
         return all(
-            "benign" in clinvar.clinical_significance.lower()
-            or "drug response" in clinvar.clinical_significance.lower()
-            or "protective" in clinvar.clinical_significance.lower()
+            any(x in clinvar.clinical_significance.lower() for x in BENIGN_TOKENS)
             for clinvar in self.clinvars
         )
 
@@ -336,11 +336,11 @@ def setup_logging(args):
         logger.setLevel(logging.INFO)
 
 
-def var_group(variant):
+def var_group(variant, exac_freq_common):
     """Returns group for the variant"""
     if not variant.candidate:
         return "bad_affecteds"
-    elif variant.common:
+    elif all(x > exac_freq_common for x in variant.exac_freq):
         return "bad_common"
     elif variant.benign:
         return "bad_benign"
@@ -522,7 +522,7 @@ def run(args):
     logging.info("Grouping variants...")
     grouped_vars = {}
     for var in variants:
-        grouped_vars.setdefault(var_group(var), []).append(var)
+        grouped_vars.setdefault(var_group(var, args.exac_freq_common), []).append(var)
     for key in grouped_vars:
         grouped_vars[key].sort(key=lambda v: v.gold_stars, reverse=True)
     logging.info(" => done.")
@@ -537,6 +537,8 @@ def run(args):
         "short_samples": short_samples,
         "pedigree": ped,
         "version": __version__,
+        'exac_freq_common': args.exac_freq_common,
+        'benign_tokens': BENIGN_TOKENS,
     }
 
     logging.info("Writing report file %s", args.output_html)
@@ -562,6 +564,9 @@ def main(argv=None):
     )
     parser.add_argument(
         "--verbose", action="store_true", default=False, help="Enable verbose mode"
+    )
+    parser.add_argument(
+        '--exac-freq-common', default=0.01, type=float, help='Frequency in ExAC to flag as common'
     )
     parser.add_argument(
         "--input-ped",
