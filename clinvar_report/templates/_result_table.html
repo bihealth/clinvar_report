@@ -6,10 +6,28 @@
       <th>pos</th>
       <th>ref</th>
       <th>alt</th>
-      <th>gene</th>
-      <th>HGVS.p</th>
+      <th>
+        <a href="#" data-toggle="tooltip" data-original-title="Frequency in ExAC population with highest frequency">
+          freq.
+        </a>
+      </th>
+      <th>
+        <a href="#" data-toggle="tooltip" data-original-title="Number of individuals in ExAC with homozygous state">
+          hom.
+        </a>
+      </th>
+      <th>
+        <a href="#" data-toggle="tooltip" data-original-title="HUGO gene symbol, hover for RefSeq transcript ID">
+            gene
+        </a>
+      </th>
+      <th>
+        <a href="#" data-toggle="tooltip" data-original-title="Protein change in HGVS notation">
+            HGVS.p
+        </a>
+      </th>
       <th>effect</th>
-      <th>disease</th>
+      <th>trait</th>
       <th>significance</th>
       <th>revision</th>
       {% for sample in short_samples %}
@@ -17,7 +35,7 @@
       {% endfor %}
       <th>
           <a href="#" data-toggle="tooltip" data-original-title="Mode of Inheritance">
-            MoH
+            MoI
           </a>
       </th>
       <th>
@@ -42,6 +60,8 @@
       <td>{{ '{:,}'.format(var.pos) }}</td>
       <td>{{ var.ref }}</td>
       <td>{{ var.alt|join(', ') }}</td>
+      <td>{{ var.exac_freq|join(', ') }}</td>
+      <td>{{ var.exac_hom|join(', ') }}</td>
       <td>
         <a href="#" data-toggle="tooltip" data-original-title="{{ var.transcript }}">
           {{ var.gene_name }}
@@ -74,56 +94,27 @@
         <ul style="margin: 0; padding: 0;">
           {% for disease in var.diseases %}
             <li>{{ disease }}</li>
+          {% else %}
           {% endfor %}
         </ul>
-        {#
-        {% if var.diseases|length == 1 %}
-          {{ var.diseases[0] }}
-        {% else %}
-          {% set outer_loop = loop %}
-          {% for disease in var.diseases %}
-            {% if loop.index < 2 %}
-              <a href="#" data-toggle="tooltip" data-html="true" data-original-title="
-                {%- for disease in var.diseases|sort -%}
-                  {% if loop.index > 1 %};<br />{% endif %}{{ disease }}
-                {%- endfor -%}">
-                {{ disease }}
-                <a href="#details-{{ outer_loop.index }}-{{ set_name }}" data-toggle="collapse" title="variant details has {{ var.clinical_accessions|length - 1}} more ClinVar entries">
-                  <span class="badge badge-pill badge-info">
-                    +{{ var.diseases|length - 1}}
-                  </span>
-                </a>
-              </a>
-            {% endif %}
-          {% endfor %}
-        {% endif %}
-        #}
       </td>
       <td>
         {% if var.conflict %}
           !!conflict, see details for more info!!
         {% else %}
-          {% if var.significances|length == 1 %}
-            {{ var.significance['count'] }}&#10005;{{ var.significance['level'] }}
-          {% else %}
-            <a href="#" data-toggle="tooltip" data-original-title="
-              {%- for lvl, count in var.significances|dictsort|reverse -%}
-                {% if loop.index > 1 %}, {% endif %}
-                {{ count }}&#10005;{{ lvl }}
-              {%- endfor -%}">
-              {{ var.significance['count'] }}&#10005;{{ var.significance['level'] }}
-            </a>
-          {% endif %}
+          {{ var.significances|join(', ') }}
         {% endif %}
       </td>
       <td class="nowrap">
-        {% for i in range(var.stars) %}&#9733;{% endfor -%}
-        {%- for i in range(4 - var.stars) %}&#9734;{% endfor %}
+        <a href="#" data-toggle="tooltip" title="{{ var.gold_stars_title }}">
+          {% for i in range(var.gold_stars) %}&#9733;{% endfor -%}
+          {%- for i in range(4 - var.gold_stars) %}&#9734;{% endfor %}
+        </a>
       </td>
       {% for gt_info in var.gt_infos.values() %}
         <td>
           {% if gt_info.ad %}
-            <a href="#details-{{ loop.index }}-{{ gt_info.sample }}"  data-toggle="tooltip" data-html="true" data-original-title="AD: {{ gt_info.ad|join(', ') }}<br />AF: {{ (100 * gt_info.ad[1] // (gt_info.ad[0] + gt_info.ad[1])) }}%">
+            <a href="#details-{{ loop.index }}-{{ gt_info.sample }}"  data-toggle="tooltip" data-html="true" data-original-title="allele depths (ref, alt1, [alt2, ...]): {{ gt_info.ad|join(', ') }}<br />alt allele fractions: {{ (100 * gt_info.ad[1] // (gt_info.ad[0] + gt_info.ad[1])) }}%">
               {{ gt_info.gt }}
             </a>
           {% else %}
@@ -142,34 +133,35 @@
         {{ 'common' if var.common else '-' }}
       </td>
       <td class="nowrap">
-        <a href="https://www.ncbi.nlm.nih.gov/clinvar/{{ var.clinical_accessions[0] }}">
+        <a href="http://localhost:60151/goto?locus={{ var.locus }}">IGV</a>
+        &middot;
+        <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/{{ var.variation_ids[0] }}">
           ClinVar
         </a>
-        {% if var.clinical_accessions|length > 1 %}
-          &nbsp; <a href="#details-{{ loop.index }}-{{ set_name }}" data-toggle="collapse" title="variant details has {{ var.clinical_accessions|length - 1}} more ClinVar entries">
+        {% if var.variation_ids|length > 1 %}
+          &nbsp; <a href="#details-{{ loop.index }}-{{ set_name }}" data-toggle="collapse" title="variant details has {{ var.variation_ids|length - 1}} more ClinVar entries">
             <span class="badge badge-pill badge-info">
-              +{{ var.clinical_accessions|length - 1}}
+              +{{ var.variation_ids|length - 1}}
             </span>
           </a>
         {% endif %}
       </td>
     </tr>
     <tr id="details-{{ loop.index }}-{{ set_name }}" class="collapse">
-      <td colspan="{{ 4 + (var.gt_infos|length) * 2 }}">
+      <td colspan="{{ 14 + (var.gt_infos|length) * 2 }}">
         <div class="card">
-          <!--
           {% if var.annotations %}
-            <h4 class="card-header">Annotations</h4>
+            <h4 class="card-header">Extended Annotations</h4>
             <div class="card-body">
               <table class="table table-sm">
                 <thead>
                   <tr>
-                    <td>allele</td>
-                    <td>gene</td>
-                    <td>effect</td>
+                    <th>allele</th>
+                    <th>gene</th>
+                    <th>effect</th>
                     <th>transcript</th>
-                    <td>HGVS:c</td>
-                    <td>HGVS:p</td>
+                    <th>HGVS.c</th>
+                    <th>HGVS.p</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -190,103 +182,52 @@
             </div>
           {% endif %}
 
-          {% if var.basic_infos %}
-            <h4 class="card-header">Basic Infos</h4>
+          {% if var.clinvars %}
+            <h4 class="card-header">Extended Clinvar Records</h4>
 
             <div class="card-body">
               <table class="table table-sm">
                 <thead>
                   <tr>
-                    <th>allele</th>
-                    <th>HGVS</th>
-                    <th>origin</th>
+                    <th>symbol</th>
+                    <th>HGVS.c</th>
+                    <th>HGVS.p</th>
+                    <th>clinical significance</th>
+                    <th>pathogenic</th>
+                    <th>likely pathogenic</th>
+                    <th>uncertain_significance</th>
+                    <th>likely benign</th>
+                    <th>benign</th>
+                    <th>gold stars</th>
+                    <th>links</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {% for allele in var.alt %}
-                    {% for basic_info in var.basic_infos[allele] %}
-                    <tr>
-                      <td>{{ basic_info.allele }}</td>
-                      <td>{{ basic_info.hgvs_string }}</td>
-                      <td>{{ basic_info.origin }}</td>
-                    </tr>
-                    {% endfor %}
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          {% endif %}
-          -->
-
-          {% if var.disease_infos %}
-            <h4 class="card-header">Disease Details</h4>
-
-            <div class="card-body">
-              <table class="table table-sm">
-                <thead>
+                  {% for clinvar in var.clinvars %}
                   <tr>
-                    <th>allele</th>
-                    <th>significance</th>
-                    <th>DB info</th>
-                    <th>revision_status</th>
-                    <th>clinical_accession</th>
+                    <td>{{ clinvar.symbol }}</td>
+                    <td>{{ clinvar.hgvs_c }}</td>
+                    <td>{{ clinvar.hgvs_p }}</td>
+                    <td>{{ clinvar.clinical_significance }}</td>
+                    <td>{{ clinvar.pathogenic }}</td>
+                    <td>{{ clinvar.likely_pathogenic }}</td>
+                    <td>{{ clinvar.uncertain_significance }}</td>
+                    <td>{{ clinvar.likely_benign }}</td>
+                    <td>{{ clinvar.benign }}</td>
+                    <td>
+                      <a href="#" data-toggle="tooltip" title="{{ clinvar.review_status }}">
+                        {% for i in range(var.gold_stars) %}&#9733;{% endfor -%}
+                        {%- for i in range(4 - var.gold_stars) %}&#9734;{% endfor %}
+                      </a>
+                    </td>
+                    <td>
+                      Clinvar: {% for variation_id in clinvar.variation_id %}
+                      <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/{{ variation_id }}">
+                        {{ variation_id }}
+                      </a>
+                      {% endfor %}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {% for allele in var.alt %}
-                    {% for disease_info in var.disease_infos[allele] %}
-                      <tr>
-                        <td>{{ disease_info.allele }}</td>
-                        <td>{{ disease_info.significance }}</td>
-                        <td>
-                          <ul>
-                            {% for db_info in disease_info.db_infos %}
-                            <li>
-                              <a href="{{ db_info.url }}">
-                                {{ db_info.db }}: {{ db_info.name }}
-                              </a>
-                            </li>
-                            {% endfor %}
-                          </ul>
-                        </td>
-                        <td>{{ disease_info.revision_status }}</td>
-                        <td>
-                          <a href="https://www.ncbi.nlm.nih.gov/clinvar/{{ disease_info.clinical_accession }}">
-                            ClinVar:
-                            {{ disease_info.clinical_accession }}
-                          </a>
-                        </td>
-                      </tr>
-                    {% endfor %}
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          {% endif %}
-
-          {% if var.var_infos %}
-            <h4 class="card-header">Variant Info</h4>
-
-            <div class="card-body">
-              <table class="table table-sm">
-                <thead>
-                  <tr>
-                    <th>allele</th>
-                    <th>DB name</th>
-                    <th>ID in DB</th>
-                    <th>origins</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for allele in var.alt %}
-                    {% for disease_info in var.var_infos[allele] %}
-                      <tr>
-                        <td>{{ disease_info.allele }}</td>
-                        <td>{{ disease_info.database_name }}</td>
-                        <td>{{ disease_info.id_in_db }}</td>
-                        <td>{{ disease_info.origins|join(', ') }}</td>
-                      </tr>
-                    {% endfor %}
                   {% endfor %}
                 </tbody>
               </table>

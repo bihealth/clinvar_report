@@ -2,51 +2,26 @@
 
 import argparse
 import collections
+import contextlib
+import gzip
 import logging
 import re
 import sys
+import typing
 from urllib.parse import unquote
 
+import attr
+import intervaltree
 import vcfpy
 
-#: Constant with INFO key for ``BASIC_INFO``.
-BASIC_INFO = "BASIC_INFO"
-#: Constant with INFO key for ``DISEASE_INFO``.
-DISEASE_INFO = "DISEASE_INFO"
-#: Constant with INFO key for ``VAR_INFO``.
-VAR_INFO = "VAR_INFO"
-#: DB base URLs
-DB_BASE_URLS = {
-    "MedGen": "https://www.ncbi.nlm.nih.gov/gtr/conditions/",
-    "OMIM": "https://www.omim.org/entry/",
-    "SNOMED_CT": "https://phinvads.cdc.gov/vads/ViewValuhttps:/phinvads.cdc.gov/vads/ViewCodeSystemConcept.action?oid=2.16.840.1.113883.6.96&code=",
-}
-#: Pathogenicity to level
-SIG_LEVELS = {
-    "histocompatibility": 7,
-    "drug_response": 6,
-    "pathogenic": 5,
-    "likely_pathogenic": 4,
-    "likely_benign": 3,
-    "benign": 2,
-    "uncertain": 1,
-    "not_provided": 0,
-    "other": 255,
-}
-REVISION_STARS = {
-    "conflicting_interpretation": 1,
-    "expert_panel_reviewed": 3,
-    "pratice_guideline": 4,
-    "multiple_submitters_no_conflict": 2,
-    "no_assertion": 0,
-    "no_assertion_criteria": 0,
-    "single_submitter": 1,
-    "other": 0,
-}
 
 Individual = collections.namedtuple(
     "Individual", ["family", "name", "father", "mother", "gender", "affected"]
 )
+
+SEX = {"0": "unknown", "1": "male", "2": "female"}
+
+AFFECTED = {"0": "unknown", "1": "unaffected", "2": "affected"}
 
 
 class Pedigree:
@@ -56,7 +31,17 @@ class Pedigree:
     def load(klass, file):
         entries = []
         for line in file:
-            entries.append(Individual(*line.strip().split("\t")[:6]))
+            arr = line.strip().split("\t")
+            entries.append(
+                Individual(
+                    arr[0],
+                    "-".join(arr[1].split("-")[:-3]),
+                    "-".join(arr[2].split("-")[:-3]),
+                    "-".join(arr[3].split("-")[:-3]),
+                    SEX[arr[4]],
+                    AFFECTED[arr[5]],
+                )
+            )
         return Pedigree(entries)
 
     def __init__(self, entries):
@@ -98,301 +83,174 @@ class Pedigree:
             )
 
 
-def shorten_aa(x):
-    d = {
-        "Cys": "C",
-        "Asp": "D",
-        "Ser": "S",
-        "Gln": "Q",
-        "Lys": "K",
-        "Ile": "I",
-        "Pro": "P",
-        "Thr": "T",
-        "Phe": "F",
-        "Asn": "N",
-        "Gly": "G",
-        "His": "H",
-        "Leu": "L",
-        "Arg": "R",
-        "Trp": "W",
-        "Ala": "A",
-        "Val": "V",
-        "Glu": "E",
-        "Tyr": "Y",
-        "Met": "M",
-    }
-    prefix = x.startswith("p.")
-    x = x.replace("p.(", "").replace(")", "")
-    for k, v in d.items():
-        x = x.replace(k, v)
-    if prefix:
-        return "p." + x
-    else:
-        return x
-
-
-def fixhex(text):
-    """Fix hexadecimal encoding of utf 8 characters."""
-    return re.sub(r"\\x[0-9a-f][0-9a-f]", lambda m: chr(int(m.group(0)[2:], 16)), text)
-
-
-class Annotation:
+class Annotation(typing.NamedTuple):
     """Jannovar ANN"""
 
-    # Allele|Annotation|Annotation_Impact|Gene_Name|Gene_ID|Feature_Type|Feature_ID|Transcript_BioType|Rank|HGVS.c|HGVS.p|cDNA.pos / cDNA.length|CDS.pos / CDS.length|AA.pos / AA.length|Distance|ERRORS / WARNINGS / INFO
-    def __init__(
-        self, allele, impact, effect, gene_name, gene_id, transcript, hgvs_c, hgvs_p
-    ):
-        self.allele = allele
-        self.impact = impact
-        self.effect = effect
-        self.gene_name = gene_name
-        self.gene_id = gene_id
-        self.transcript = transcript
-        self.hgvs_c = hgvs_c
-        self.hgvs_p = shorten_aa(hgvs_p)
+    allele: str
+    impact: str
+    effect: str
+    gene_name: str
+    gene_id: str
+    transcript: str
+    hgvs_c: str
+    hgvs_p: str
 
 
-class BasicInfo:
+class BasicInfo(typing.NamedTuple):
     """Represents a ``BASIC_INFO`` entry."""
 
-    def __init__(self, allele, hgvs_string, origin):
-        #: The annotated allele
-        self.allele = allele
-        #: The annotating HGVS string
-        self.hgvs_string = hgvs_string
-        #: The variant origin
-        self.origin = origin
-
-    def __repr__(self):
-        return "BasicInfo({})".format(
-            ", ".join(map(str, (self.allele, self.hgvs_string, self.origin)))
-        )
+    allele: str
+    hgvs_string: str
+    origin: str
 
 
-# "Annotation of disease information of the form 'allele | significance | disease db | id in disease db | name in disease db | revision status | clinical accession'
-
-
-class DiseaseInfo:
-    """Represents a ``DISEASE_INFO`` entry."""
-
-    def __init__(
-        self,
-        allele,
-        significance,
-        disease_db,
-        id_in_db,
-        name_in_db,
-        revision_status,
-        clinical_accession,
-    ):
-        self.allele = allele
-        self.significance = significance
-        self.db_infos = []
-        ids = list(
-            map(
-                lambda x: x.replace("HP__", "HP:"),
-                id_in_db.replace("HP:", "HP__").split(":"),
-            )
-        )
-        for db, id_ in zip(disease_db.split(":"), ids):
-            self.db_infos.append(
-                {
-                    "db": db,
-                    "id": id_,
-                    "name": name_in_db,
-                    "url": DB_BASE_URLS.get(db, "") + id_,
-                }
-            )
-        self.name_in_db = name_in_db
-        self.revision_status = revision_status
-        self.stars = REVISION_STARS[revision_status]
-        self.clinical_accession = clinical_accession
-
-    def __repr__(self):
-        return "DiseaseInfo({})".format(
-            ", ".join(
-                map(
-                    str,
-                    (
-                        self.allele,
-                        self.significance,
-                        self.disease_db,
-                        self.id_in_db,
-                        self.name_in_db,
-                        self.revision_status,
-                        self.clinical_accession,
-                    ),
-                )
-            )
-        )
-
-
-class VarInfo:
+class VarInfo(typing.NamedTuple):
     """Represents a ``VAR_INFO`` entry."""
 
-    def __init__(self, allele, database_name, id_in_db, origins):
-        #: The annotated allele
-        self.allele = allele
-        #: The database name
-        self.database_name = database_name
-        #: The variant identifier in database
-        self.id_in_db = id_in_db
-        #: The variant origins
-        self.origins = tuple(origins)
-
-    def __repr__(self):
-        return "VarInfo({})".format(
-            ", ".join(
-                map(str, (self.allele, self.database_name, self.id_in_db, self.origins))
-            )
-        )
+    allele: str
+    database_name: str
+    id_in_db: str
+    origins: typing.Tuple[str]
 
 
-class GenotypeInfo:
+class GenotypeInfo(typing.NamedTuple):
     """Represent genotype information."""
 
-    def __init__(self, sample, gt, ad):
-        self.sample = sample
-        self.gt = gt
-        self.ad = ad
-
-    def __repr__(self):
-        return "GenotypeInfo({})".format(
-            ", ".join(map(str, (self.sample, self.gt, self.ad)))
-        )
+    sample: str
+    gt: str
+    ad: int
 
 
+@attr.s
 class Variant:
     """Represents an annotated variant."""
 
-    def __init__(
-        self,
-        chrom,
-        pos,
-        ref,
-        alt,
-        annotations,
-        basic_infos,
-        disease_infos,
-        variant_infos,
-        gt_infos,
-        inheritance_modes,
-        common,
-        candidate,
-    ):
-        #: Chromosome with variant
-        self.chrom = chrom
-        #: Chromosomal variant position
-        self.pos = pos
-        #: Reference allele
-        self.ref = ref
-        #: Alternative alleles
-        self.alt = alt
-        #: Annotations
-        self.annotations = annotations
-        #: Basic infos for each allele
-        self.basic_infos = basic_infos
-        #: Disease-related information
-        self.disease_infos = disease_infos
-        #: Variant-specific information
-        self.variant_infos = variant_infos
-        #: Genotype information
-        self.gt_infos = gt_infos
-        #: Gene name
+    chrom = attr.ib()
+    pos = attr.ib()
+    ref = attr.ib()
+    alt = attr.ib()
+    affected_start = attr.ib()
+    affected_end = attr.ib()
+    exac_freq = attr.ib()
+    exac_hom = attr.ib()
+    annotations = attr.ib()
+    gt_infos = attr.ib()
+    inheritance_modes = attr.ib()
+    common = attr.ib()
+    candidate = attr.ib()
+    clinvars = attr.ib(default=[])
+    clinvars_ovl = attr.ib(default=[])
+
+    gene_name = attr.ib(init=False)
+    transcript = attr.ib(init=False)
+    hgvs_c = attr.ib(init=False)
+    hgvs_p = attr.ib(init=False)
+    effects = attr.ib(init=False)
+
+    def __attrs_post_init__(self):
         allele = self.alt[0]
         if allele in self.annotations:
             self.gene_name = self.annotations[allele][0].gene_name
         else:
             self.gene_name = "-"
-        #: Transcript
+
         if allele in self.annotations:
             self.transcript = self.annotations[allele][0].transcript
         else:
             self.transcript = "-"
-        #: HGVS.c
         if allele in self.annotations:
             self.hgvs_c = self.annotations[allele][0].hgvs_c
         else:
             self.hgvs_c = None
-        #: HGVS.p
         if allele in self.annotations:
             self.hgvs_p = self.annotations[allele][0].hgvs_p
         else:
             self.hgvs_p = None
-        #: effect
         if allele in self.annotations:
             self.effects = self.annotations[allele][0].effect
         else:
             self.effects = []
-        #: ClinVar accessions
-        self.clinical_accessions = [
-            i.clinical_accession for i in self.disease_infos[allele]
-        ]
-        #: Significance
-        self.significances = {}
-        for i in self.disease_infos[allele]:
-            if i.significance != "other":
-                self.significances.setdefault(SIG_LEVELS[i.significance], 0)
-                self.significances[SIG_LEVELS[i.significance]] += 1
-        #: Diseases
-        self.diseases = {}
-        for i in self.disease_infos[allele]:
-            for db_info in i.db_infos:
-                if db_info["name"] not in ("not specified", "not provided"):
-                    self.diseases[db_info["id"]] = db_info["name"]
-        self.diseases = list(sorted(set(self.diseases.values())))
-        #: Compatible modes of inheritance
-        self.inheritance_modes = inheritance_modes
-        #: Whether or not flagged as common
-        self.common = bool(common)
-        #: Candidate because affected shows non-ref/no-call variant.
-        self.candidate = candidate
-        #: Pick significance and stars to display.
-        self.significance, self.stars, self.config = self._pick_display_significance(
-            allele
+
+    @property
+    def benign(self):
+        return all(
+            "benign" in clinvar.clinical_significance.lower()
+            or "drug response" in clinvar.clinical_significance.lower()
+            or "protective" in clinvar.clinical_significance.lower()
+            for clinvar in self.clinvars
         )
 
-    def _pick_display_significance(self, allele):
-        sigs_at_stars = {}
-        for info in self.disease_infos[allele]:
-            stars = REVISION_STARS[info.revision_status]
-            level = SIG_LEVELS[info.significance]
-            if level >= 255:
-                continue
-            sigs_at_stars.setdefault(stars, {}).setdefault(level, 0)
-            sigs_at_stars[stars][level] += 1
-        stars = max(sigs_at_stars.keys())
-        sigs = set(sigs_at_stars[stars])
-        if (sigs & {2, 3}) and (sigs & {4, 5, 6, 7}):
-            conflict = True
+    @property
+    def uncertain_conflict(self):
+        return all(
+            "conflict" in clinvar.clinical_significance.lower()
+            or "uncertain" in clinvar.clinical_significance.lower()
+            or "not provided" in clinvar.clinical_significance.lower()
+            for clinvar in self.clinvars
+        )
+
+    @property
+    def variation_ids(self):
+        result = []
+        for clinvar in self.clinvars:
+            result += clinvar.variation_id
+        return result
+
+    @property
+    def significances(self):
+        result = []
+        for clinvar in self.clinvars:
+            result.append(clinvar.clinical_significance)
+        return result
+
+    @property
+    def conflict(self):
+        return any(var.conflicted for var in self.clinvars)
+
+    @property
+    def diseases(self):
+        result = []
+        result_lower = ["not specified"]
+        for var in self.clinvars:
+            for trait in var.all_traits:
+                if not trait.lower() in result_lower:
+                    result.append(trait)
+                    result_lower.append(trait.lower())
+        return result
+
+    @property
+    def locus(self):
+        return "{}:{}-{}".format(self.chrom, self.pos, self.pos)
+
+    @property
+    def pretty(self):
+        import simplejson as json
+        import pprint
+
+        return pprint.pformat(json.loads(json.dumps(attr.asdict(self))))
+
+    @property
+    def gold_stars(self):
+        """Return maximal number of gold stars for all ClinVar entries, including overlaps."""
+        if not self.clinvars and not self.clinvars_ovl:
+            return 0
         else:
-            conflict = True
-        sig = {"level": max(sigs), "count": self.significances[max(sigs)]}
-        return sig, stars, conflict
+            return max(
+                self.clinvars + self.clinvars_ovl, key=lambda x: x.gold_stars
+            ).gold_stars
 
-    def __repr__(self):
-        return "VarInfo({})".format(
-            ", ".join(
-                map(
-                    str,
-                    (
-                        self.chrom,
-                        self.pos,
-                        self.ref,
-                        self.alt,
-                        self.annotations,
-                        self.basic_infos,
-                        self.disease_infos,
-                        self.variant_infos,
-                        self.gt_infos,
-                    ),
-                )
-            )
-        )
+    @property
+    def gold_stars_title(self):
+        """Return review status title to display"""
+        if not self.clinvars and not self.clinvars_ovl:
+            return 0
+        else:
+            return max(
+                self.clinvars + self.clinvars_ovl, key=lambda x: x.gold_stars
+            ).review_status
 
 
-def parse_record(var, ped, args):
+def variant_from_vcf_record(var, ped, args):
     # Parse ANN
     annotations = collections.OrderedDict()
     if "ANN" in var.INFO:
@@ -415,85 +273,42 @@ def parse_record(var, ped, args):
                     gene_id,
                     transcript,
                     hgvs_c,
-                    hgvs_p,
+                    hgvs_p.replace("(", "").replace(")", ""),
                 )
             )
-
-    # Parse BASIC_INFO
-    basic_infos = collections.OrderedDict()
-    for basic_info in var.INFO.get(args.clinvar_prefix + BASIC_INFO, []):
-        allele, hgvs_string, origin = basic_info.split("|")
-        hgvs_string = unquote(hgvs_string)
-        basic_infos.setdefault(allele, []).append(
-            BasicInfo(allele, hgvs_string, origin)
-        )
-
-    # Parse DISEASE_INFO
-    disease_infos = collections.OrderedDict()
-    for disease_info in var.INFO.get(args.clinvar_prefix + DISEASE_INFO, []):
-        (
-            allele,
-            significance,
-            disease_db,
-            id_in_db,
-            name_in_db,
-            revision_status,
-            clinical_accession,
-        ) = disease_info.split("|")
-        hgvs_string = unquote(hgvs_string)
-        name_in_db = fixhex(unquote(name_in_db)).replace("_", " ")
-        disease_infos.setdefault(allele, []).append(
-            DiseaseInfo(
-                allele,
-                significance,
-                disease_db,
-                id_in_db,
-                name_in_db,
-                revision_status,
-                clinical_accession,
-            )
-        )
-
-    # Parse VAR_INFO
-    var_infos = collections.OrderedDict()
-    for var_info in var.INFO.get(args.clinvar_prefix + VAR_INFO, []):
-        # allele | db name | id in db
-        allele, db_name, id_in_db, origins = var_info.split("|")
-        db_name = unquote(db_name)
-        id_in_db = unquote(id_in_db)
-        origins = origins.split("&")
-        var_infos.setdefault(allele, []).append(
-            VarInfo(allele, db_name, id_in_db, origins)
-        )
 
     # Get out GT information
     gt_infos = collections.OrderedDict()
     for call in var.calls:
         gt_infos[call.sample] = GenotypeInfo(
-            call.sample, call.data["GT"], call.data["AD"]
+            call.sample, call.data["GT"], call.data.get("AD")
         )
 
     # Get compatible modes of inheritance
     inheritance_modes = var.INFO.get("INHERITANCE", [])
 
     # Any affected individual has a het. or hom. alt. call
-    affecteds = [i.name for i in ped.entries if i.affected == "2"]
+    affecteds = [i.name for i in ped.entries if i.affected == AFFECTED["2"]]
     candidate = False
     for call in var.calls:
-        if call.sample in affecteds and call.called and call.gt_type != vcfpy.HOM_REF:
+        sample_short = "-".join(call.sample.split("-")[:-3])
+        if sample_short in affecteds and call.called and call.gt_type != vcfpy.HOM_REF:
             candidate = True
 
+    exac_freq = var.INFO.get('EXAC_AF_POPMAX', [0.0])
+    exac_hom = var.INFO.get('EXAC_HOM_ALL', [0])
+
     alts = [a.serialize() for a in var.ALT]
-    alts = [a for a in alts if a in basic_infos or a in disease_infos or a in var_infos]
     return Variant(
         var.CHROM,
         var.POS,
         var.REF,
         alts,
+        var.affected_start,
+        var.affected_end,
+        exac_freq,
+        exac_hom,
         annotations,
-        basic_infos,
-        disease_infos,
-        var_infos,
         gt_infos,
         inheritance_modes,
         var.INFO.get("DBSNP_COMMON", False),
@@ -520,10 +335,152 @@ def var_group(variant):
         return "bad_affecteds"
     elif variant.common:
         return "bad_common"
-    elif not variant.inheritance_modes:
-        return "bad_inheritance"
+    elif variant.benign:
+        return "bad_benign"
+    elif variant.uncertain_conflict:
+        return "bad_uncertain_conflict"
     else:
         return "good"
+
+
+class ClinVarRecord(typing.NamedTuple):
+    """One record from MacArthur ClinVar TSV file."""
+
+    chrom: str
+    pos: int
+    ref: str
+    alt: str
+    start: int
+    stop: int
+    strand: str
+    variation_type: str
+    variation_id: typing.List[int]
+    rcv: typing.List[str]
+    scv: typing.List[str]
+    allele_id: str
+    symbol: str
+    hgvs_c: str
+    hgvs_p: str
+    molecular_consequence: str
+    clinical_significance: str
+    clinical_significance_ordered: typing.List[str]
+    pathogenic: int
+    likely_pathogenic: int
+    uncertain_significance: int
+    likely_benign: int
+    benign: int
+    review_status: str
+    review_status_ordered: typing.List[str]
+    last_evaluated: str
+    all_submitters: typing.List[str]
+    submitters_ordered: str
+    all_traits: typing.List[str]
+    all_pmids: typing.List[str]
+    inheritance_modes: str
+    age_of_onset: str
+    prevalence: str
+    disease_mechanism: str
+    origin: str
+    xrefs: typing.List[str]
+    dates_ordered: typing.List[str]
+    gold_stars: int
+    conflicted: int
+
+
+class ClinVarContig:
+    """Database of ClinVar variants on one contig."""
+
+    @staticmethod
+    def _coerce(val_type):
+        val, t = val_type
+        if getattr(t, "__origin__", None) == typing.List:
+            f = t.__args__[0]
+            return list(map(f, val.split(";")))
+        else:
+            if val == "" or (t is int and val == "-"):
+                return None
+            else:
+                return t(val)
+
+    @classmethod
+    def load(klass, tsv_readers, contig):
+        """Load ClinVar variants from the given contig.
+
+        NB: Because pysam.TabixFile cannot parse the MacArthur ClinVar TSV file, we are simply
+        reading the whole file on each iteration which has OK performance...
+        """
+        records = []
+        for reader in tsv_readers:
+            reader.seek(0)
+            for line in reader:
+                if line.startswith(contig + "\t"):
+                    vals = list(
+                        map(
+                            klass._coerce,
+                            zip(
+                                line.split("\t"), ClinVarRecord.__annotations__.values()
+                            ),
+                        )
+                    )
+                    records.append(ClinVarRecord(*vals))
+        logging.info("Found %d ClinVar records on contig %s", len(records), contig)
+        return ClinVarContig(contig, records)
+
+    def __init__(self, contig, records):
+        #: Name of the contig to query.
+        self.contig = contig
+        #: Flat list of all records.
+        self.records = records
+        #: Interval tree of all records.
+        self.itree = intervaltree.IntervalTree.from_tuples(
+            (record.start - 1, record.stop, record) for record in self.records
+        )
+
+    def query(self, variant):
+        """Query for matches and overlaps with ``variant``.
+
+        Args:
+
+        ``variant`` - The ``Variant`` to query.
+        """
+        matches, overlaps = [], []
+        for itv in self.itree.search(variant.affected_start, variant.affected_end):
+            record = itv.data
+            if (
+                record.start - 1 == variant.affected_start
+                and record.stop == variant.affected_end
+                and record.alt in variant.alt
+            ):
+                matches.append(record)
+            else:
+                overlaps.append(record)
+        return matches, overlaps
+
+
+def process_contig(contig, length, vcf_reader, clinvar_readers, ped, args):
+    """Process the given contig and yield ``Variant`` objects."""
+    logging.info("Processing contig %s", contig)
+    yielded = 0
+    clinvar_contig = ClinVarContig.load(clinvar_readers, contig)
+    try:
+        vcf_it = vcf_reader.fetch(contig, 0, int(length))
+    except ValueError as e:
+        logging.warn("Problem fetching VCF records: %s", e)
+        vcf_it = []
+    for record in vcf_it:
+        variant = variant_from_vcf_record(record, ped, args)
+        variant.clinvars, variant.clinvars_ovl = clinvar_contig.query(variant)
+        variant.clinvars_ovl = []  # TODO: ignore for now --> activate?
+        if variant.clinvars or variant.clinvars_ovl:
+            yielded += 1
+            yield variant
+    logging.info("Annotated %d variants on contig %s", yielded, contig)
+
+
+def get_contigs(vcf_reader):
+    """Get list of ``(name, length)`` of contigs from ``vcf_reader``."""
+    contigs = [(line.id, line.length) for line in vcf_reader.header.get_lines("contig")]
+    return contigs
 
 
 def run(args):
@@ -533,24 +490,35 @@ def run(args):
     with open(args.input_ped, "rt") as f:
         ped = Pedigree.load(f)
 
-    logging.info("Reading input VCF file %s", args.input_vcf)
-    with vcfpy.Reader.from_path(args.input_vcf) as reader:
-        samples = reader.header.samples.names
-        short_samples = ["-".join(s.split("-")[:-3]) for s in samples]
-        records = [r for r in reader]
-    logging.info(" => done reading %d records", len(records))
+    logging.info("ClinVar-annotating input VCF file %s", args.input_vcf)
+    variants = []
+    with vcfpy.Reader.from_path(args.input_vcf) as vcf_reader:
+        with contextlib.ExitStack() as stack:
+            # Open all ClinVar tsv readers.
+            tsv_readers = [
+                stack.enter_context(gzip.open(clinvar_tsv, "rt"))
+                for clinvar_tsv in args.clinvar_tsvs
+            ]
+            # Get samples, and short sample names.
+            samples = vcf_reader.header.samples.names
+            short_samples = ["-".join(s.split("-")[:-3]) for s in samples]
+            # Process all contigs.
+            for contig, length in get_contigs(vcf_reader):
+                if re.match(args.contig_regex, contig):
+                    variants += list(
+                        process_contig(
+                            contig, length, vcf_reader, tsv_readers, ped, args
+                        )
+                    )
+    logging.info(" => done, have %d records", len(variants))
 
-    logging.info("Parsing ClinVar VCF")
-    variants = [parse_record(r, ped, args) for r in records]
-    logging.info(" => done parsing ClinVar VCF")
-
+    logging.info("Grouping variants...")
     grouped_vars = {}
     for var in variants:
         grouped_vars.setdefault(var_group(var), []).append(var)
     for key in grouped_vars:
-        grouped_vars[key].sort(
-            key=lambda v: (v.stars, v.significance["level"]), reverse=True
-        )
+        grouped_vars[key].sort(key=lambda v: v.gold_stars, reverse=True)
+    logging.info(" => done.")
 
     logging.info("Grouped variants")
     for key, lst in sorted(grouped_vars.items()):
@@ -560,6 +528,7 @@ def run(args):
         "variants": grouped_vars,
         "samples": samples,
         "short_samples": short_samples,
+        "pedigree": ped,
     }
 
     logging.info("Writing report file %s", args.output_html)
@@ -579,6 +548,11 @@ def main(argv=None):
     """Main program entry point, starts parsing command line arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--contig-regex",
+        default="(chr)?([0-9]+|X|Y|M|MT)",
+        help="Regular expression for selecting contigs",
+    )
+    parser.add_argument(
         "--verbose", action="store_true", default=False, help="Enable verbose mode"
     )
     parser.add_argument(
@@ -586,16 +560,18 @@ def main(argv=None):
         required=True,
         help="Path to pedigree to use for affected filtering",
     )
+    parser.add_argument("--input-vcf", required=True, help="VCF file to annotate")
     parser.add_argument(
-        "--input-vcf", type=str, required=True, help="Path to input VCF file"
+        "--clinvar-tsv",
+        dest="clinvar_tsvs",
+        type=str,
+        required=True,
+        default=[],
+        action="append",
+        help="Path to tabix-indexed clinvar TSV",
     )
     parser.add_argument(
         "--output-html", type=str, required=True, help="Path to output HTML file"
-    )
-    parser.add_argument(
-        "--clinvar-prefix",
-        default="CLINVAR_",
-        help="Prefix of clinvar variants in VCF file",
     )
 
     args = parser.parse_args(argv)

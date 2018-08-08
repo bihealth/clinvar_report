@@ -1,2 +1,4 @@
 vcfpy >=0.10
 jinja2
+intervaltree
+attrs

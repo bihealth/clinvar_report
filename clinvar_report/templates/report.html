@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 
     <!-- Bootstrap CSS -->
-    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta/css/bootstrap.min.css" integrity="sha384-/Y6pD6FV/Vv2HJnA6t+vslU6fwYXjCFtcEpHbNJ0lyAFsXTsjBbfaDjzALeQsN6M" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
     <style type="text/css">
     .nowrap {
         white-space:nowrap;
@@ -30,9 +30,14 @@
           <dl class="row">
             <dt class="col-sm-1">Samples:</dt>
             <dd class="col-sm-11">{{ short_samples|join(", ") }}</dd>
+            <dt class="col-sm-1">
+              <button class="btn btn-default btn-sm" data-toggle="collapse" data-target="#note">
+                Toggle Notes
+              </button>
+            </dt>
           </dl>
 
-          <div class="alert alert-info" role="alert">
+          <div class="alert alert-info" role="alert" id="note">
             <p>
               <strong>Notes</strong>
             </p>
@@ -50,8 +55,14 @@
                 The variants were filtered in the following order:
                 (a) remove variants where no affected shows a non-reference or no-call genotype,
                 (b) remove variants that are flagged as common,
-                (c) remove variants that have no compatible mode of inheritance with the given pedigree.
+                (c) remove variants flagged as benign,
+                (d) remove variants with uncertain significance, conflicting interpretation or non-provided significance,
                 Nevertheless, you can still view the variants removed in each step.
+              </li>
+              <li>
+                Note that low-quality variants are ignored in the inheritance filter.
+                Thus, if the variant is of low quality in the index, no compatible mode of inheritance will be displayed.
+                If the variant is of low quality in a parent, this will be interpreted as a wildcard.
               </li>
             </ul>
           </div>
@@ -70,9 +81,15 @@
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" data-toggle="tab" href="#inheritance" role="tab">
-                Removed: Inheritance
-                <span class="badge badge-pill badge-warning">{{ variants['bad_inheritance']|length }}</span>
+              <a class="nav-link" data-toggle="tab" href="#uncertain_conflict" role="tab">
+                Removed: Uncertain Sig./Conflicting Interp.
+                <span class="badge badge-pill badge-warning">{{ variants['bad_uncertain_conflict']|length }}</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" data-toggle="tab" href="#benign" role="tab">
+                Removed: Benign/Drug Response
+                <span class="badge badge-pill badge-warning">{{ variants['bad_benign']|length }}</span>
               </a>
             </li>
             <li class="nav-item">
@@ -87,6 +104,11 @@
                 <span class="badge badge-pill badge-warning">{{ variants['bad_affecteds']|length }}</span>
               </a>
             </li>
+            <li class="nav-item">
+              <a class="nav-link" data-toggle="tab" href="#pedigree" role="tab">
+                Pedigree
+              </a>
+            </li>
           </ul>
 
           <div class="tab-content">
@@ -94,7 +116,7 @@
               <div class="card">
                 <div class="card-block">
                   <p class="card-text" style="padding: 1em;">
-                    For these variants, (a) at least one affected has a non-reference variant, (b) they are not common, (c) there is a compatible Mendelian mode of inheritance.
+                    These variants pass through filters (a)-(d) described above.
                   </p>
                 </div>
                 <div class="card-block">
@@ -104,25 +126,11 @@
                 </div>
               </div>
             </div>
-            <div class="tab-pane" id="inheritance" role="tabpanel">
-              <div class="card">
-                <div class="card-block">
-                  <p class="card-text" style="padding: 1em;">
-                      For these variants, (a) at least one affected has a non-reference variant, (b) they are not common.
-                  </p>
-                </div>
-                <div class="card-block">
-                  {% with variants = variants['bad_inheritance'], set_name = 'bad_inheritance' %}
-                    {% include "_result_table.html" %}
-                  {% endwith %}
-                </div>
-              </div>
-            </div>
             <div class="tab-pane" id="common" role="tabpanel">
               <div class="card">
                 <div class="card-block">
                   <p class="card-text" style="padding: 1em;">
-                      For these variants, (a) at least one affected has a non-reference variant.
+                    These variants pass (a) but are (b) flagged as COMMON in dbSNP or COSMIC.
                   </p>
                 </div>
                 <div class="card-block">
@@ -143,6 +151,69 @@
                   {% with variants = variants['bad_affecteds'], set_name = 'bad_affecteds' %}
                     {% include "_result_table.html" %}
                   {% endwith %}
+                </div>
+              </div>
+            </div>
+            <div class="tab-pane" id="benign" role="tabpanel">
+              <div class="card">
+                <div class="card-block">
+                  <p class="card-text" style="padding: 1em;">
+                    These variants pass filters (a)-(b) but are (c) flagged as benign, likely benign, protective, or drug response.
+                  </p>
+                </div>
+                <div class="card-block">
+                  {% with variants = variants['bad_benign'], set_name = 'bad_benign' %}
+                    {% include "_result_table.html" %}
+                  {% endwith %}
+                </div>
+              </div>
+            </div>
+            <div class="tab-pane" id="uncertain_conflict" role="tabpanel">
+                <div class="card">
+                  <div class="card-block">
+                    <p class="card-text" style="padding: 1em;">
+                      These variants pass filters (a)-(c) but are (d) flagged as either having uncertain significance, conflicting interpretation, or missing significance.
+                    </p>
+                  </div>
+                  <div class="card-block">
+                    {% with variants = variants['bad_uncertain_conflict'], set_name = 'bad_uncertain_conflict' %}
+                      {% include "_result_table.html" %}
+                    {% endwith %}
+                  </div>
+                </div>
+              </div>
+            <div class="tab-pane" id="pedigree" role="tabpanel">
+              <div class="card">
+                <div class="card-block">
+                  <p class="card-text" style="padding: 1em;">
+                    The pedigree structure, as used for variant annotation.
+                  </p>
+                </div>
+                <div class="card-block">
+                  <table class="table table-striped table-hover">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>name</th>
+                        <th>father</th>
+                        <th>mother</th>
+                        <th>sex</th>
+                        <th>affected</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for entry in pedigree.entries %}
+                      <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>{{ entry.name }}</td>
+                        <td>{{ entry.father|default("-") }}</td>
+                        <td>{{ entry.mother|default("-") }}</td>
+                        <td>{{ entry.gender }}</td>
+                        <td>{{ entry.affected }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
