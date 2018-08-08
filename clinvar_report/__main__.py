@@ -13,6 +13,7 @@ from urllib.parse import unquote
 import attr
 import intervaltree
 import vcfpy
+from clinvar_report import __version__
 
 
 Individual = collections.namedtuple(
@@ -529,6 +530,7 @@ def run(args):
         "samples": samples,
         "short_samples": short_samples,
         "pedigree": ped,
+        "version": __version__,
     }
 
     logging.info("Writing report file %s", args.output_html)

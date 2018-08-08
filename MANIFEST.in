@@ -1,0 +1,2 @@
+include versioneer.py
+include clinvar_report/_version.py

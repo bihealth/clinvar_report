@@ -6,6 +6,8 @@ import os
 from setuptools import setup, find_packages
 import pip
 
+import versioneer
+
 
 def parse_requirements(path):
     """Parse ``requirements.txt`` at ``path``."""
@@ -23,6 +25,9 @@ def parse_requirements(path):
 
 
 setup(
+    version=versioneer.get_version(),
+    cmdclass=versioneer.get_cmdclass(),
+
     name="clinvar-report",
     description=(
         "Utility for building Clinvar reports from " "Jannovar-annotated VCF files"
